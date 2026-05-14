@@ -19,6 +19,11 @@ const SUSPICIOUS_KEYWORDS = [
   'ebbirr', 'telebirr', 'cbe', 'awash', 'dashen',
   'ethiotelecom', 'insa', 'ethswitch'
 ];
+const ETHIOPIAN_BRANDS = [
+  'cbe', 'awash', 'dashen', 'abysinia', 'wogagen',
+  'ethiotelecom', 'telebirr', 'ebbirr', 'insa',
+  'addis-ababa-bank', 'oromia-bank'
+];
 
 // Commonly spoofed global brands
 const PROTECTED_BRANDS = [

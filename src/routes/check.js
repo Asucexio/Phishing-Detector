@@ -7,6 +7,7 @@ const { authMiddleware }     = require('../middleware/auth');
 const { validateURL }        = require('../middleware/validator');
 const { hashUrl }            = require('../utils/hashUrl');
 const urlParserModule        = require('../services/urlParser');
+const logger                 = require('../utils/logger');
 const RESULT_TIME_COLUMNS = [
   process.env.RESULT_TIME_COLUMN,
   'checked_at',
@@ -31,6 +32,7 @@ router.post('/', authMiddleware, validateURL, async (req, res) => {
   const { url } = req.body;
   const urlHash = hashUrl(url);
   const bypassCache = shouldBypassCache(url);
+  logger.info(`Scanning URL: ${url}`);
 
   try {
     // Step 1 — Check Redis cache first
@@ -122,10 +124,11 @@ router.post('/', authMiddleware, validateURL, async (req, res) => {
     await cacheSet(urlHash, result);
 
     // Step 6 — Return result
+    logger.info(`Result: ${result.verdict} - Score: ${result.risk_score}`);
     return res.json({ ...result, cached: false });
 
   } catch (error) {
-    console.error('Analysis error:', error.message);
+    logger.error(`Analysis error: ${error.message}`);
     return res.status(500).json({
       error: 'Analysis failed',
       message: error.message

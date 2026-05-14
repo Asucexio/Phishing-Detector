@@ -52,6 +52,16 @@ async function checkAbuseIPDB(rawUrl) {
         timeout: 8000
       }
     );
+    // Add fallback mode when APIs unavailable
+const canUseFallback = () => {
+  const working = [
+    results.safeBrowsing.error === null,
+    results.virusTotal.error === null,
+    results.abuseIPDB.error === null
+  ].filter(Boolean).length;
+  
+  return working >= 2; // Use if 2+ services work
+};
 
     const data = response.data?.data;
     if (!data) throw new Error('No data returned');

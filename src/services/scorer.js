@@ -44,6 +44,22 @@ function getVerdict(score) {
 }
 
 function getUnknownReason(results, confidence) {
+  const canUseFallback = () => {
+    const working = [
+      results.safeBrowsing.error === null,
+      results.virusTotal.error === null,
+      results.abuseIPDB.error === null
+    ].filter(Boolean).length;
+    return working >= 2;
+  };
+
+  if (!canUseFallback()) {
+    return {
+      isUnknown: true,
+      reason: 'Insufficient external services available for reliable fallback'
+    };
+  }
+
   const failedServices = [
     ['safeBrowsing', results.safeBrowsing.error],
     ['virusTotal', results.virusTotal.error],
