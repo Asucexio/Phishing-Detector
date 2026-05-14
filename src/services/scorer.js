@@ -1,3 +1,4 @@
+const urlParserModule       = require('./urlParser');
 const { checkWhois }        = require('./whois');
 const { checkSafeBrowsing } = require('./safeBrowsing');
 const { checkVirusTotal }   = require('./virusTotal');
@@ -74,10 +75,33 @@ function getUnknownReason(results, confidence) {
 }
 
 async function analyzeURL(rawUrl) {
+  const safeParseURL = (input) => {
+    try {
+      if (typeof urlParserModule.parseURL === 'function') {
+        return urlParserModule.parseURL(input);
+      }
+    } catch {}
+
+    return {
+      urlLength: input?.length || 0,
+      subdomainDepth: 0,
+      hasAtSymbol: false,
+      hasDoubleSlash: false,
+      hasIPAddress: false,
+      isShortened: false,
+      suspiciousKeywords: [],
+      tldRisk: 'low',
+      entropy: 0,
+      excessiveHyphens: false,
+      brandImpersonation: null,
+      score: 0
+    };
+  };
+
   // Run all services in parallel for speed
   const [urlResult, whoisResult, sbResult, vtResult, abuseResult] =
     await Promise.all([
-      Promise.resolve(parseURL(rawUrl)),
+      Promise.resolve(safeParseURL(rawUrl)),
       checkWhois(rawUrl),
       checkSafeBrowsing(rawUrl),
       checkVirusTotal(rawUrl),
@@ -98,10 +122,10 @@ async function analyzeURL(rawUrl) {
     virusTotal:   1.0,
     abuseIPDB:    0.8,
     whois:        0.7,
- };
-  let rawScore = 0;
+    urlParser:    1.0  // ← was 0.6, now equal weight
+  };
 
- async function analyzeURL(rawUrl) {
+  let rawScore = 0;
   rawScore += sbResult.score    * weights.safeBrowsing;
   rawScore += vtResult.score    * weights.virusTotal;
   rawScore += abuseResult.score * weights.abuseIPDB;
@@ -180,7 +204,6 @@ async function analyzeURL(rawUrl) {
     },
     checked_at: new Date().toISOString()
   };
-}
 }
 
 module.exports = { analyzeURL };

@@ -6,9 +6,7 @@ const { connectRedis } = require('./config/redis');
 const { testDB }       = require('./config/db');
 const { limiter }      = require('./middleware/rateLimit');
 
-const app = express();
-
-app.use(helmet());
+const app = express();app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(limiter);
@@ -33,15 +31,44 @@ app.use('/api/auth',    require('./routes/auth'));
 app.use('/api/check',   require('./routes/check'));
 app.use('/api/history', require('./routes/history'));
 
+// Backward-compatible aliases (without /api prefix)
+app.use('/auth',    require('./routes/auth'));
+app.use('/check',   require('./routes/check'));
+app.use('/history', require('./routes/history'));
+
+// Handle malformed JSON payloads from express.json()
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      error: 'Invalid JSON body',
+      message: err.message
+    });
+  }
+  next(err);
+});
+
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({
+    error: 'Route not found',
+    available_routes: [
+      'POST /api/auth/token',
+      'POST /api/check',
+      'GET /api/history',
+      'POST /auth/token',
+      'POST /check',
+      'GET /history'
+    ]
+  });
 });
 
 // Global error handler
 app.use((err, req, res, next) => {
   console.error(err.message);
-  res.status(500).json({ error: 'Internal server error' });
+  res.status(500).json({
+    error: 'Internal server error',
+    message: err.message
+  });
 });
 
 const PORT = process.env.PORT || 3000;

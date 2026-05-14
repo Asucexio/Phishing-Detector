@@ -6,28 +6,69 @@ const { cacheGet, cacheSet } = require('../config/redis');
 const { authMiddleware }     = require('../middleware/auth');
 const { validateURL }        = require('../middleware/validator');
 const { hashUrl }            = require('../utils/hashUrl');
+const urlParserModule        = require('../services/urlParser');
+const RESULT_TIME_COLUMNS = [
+  process.env.RESULT_TIME_COLUMN,
+  'checked_at',
+  'created_at'
+].filter((v, i, arr) => v && arr.indexOf(v) === i);
+
+function shouldBypassCache(url) {
+  try {
+    if (typeof urlParserModule.parseURL !== 'function') return false;
+    const parsed = urlParserModule.parseURL(url);
+    const hasCredentialLure = parsed.suspiciousKeywords?.some(k =>
+      ['verify', 'login', 'account', 'secure', 'password'].includes(k)
+    );
+    return Boolean(parsed.brandImpersonation && hasCredentialLure);
+  } catch {
+    return false;
+  }
+}
 
 // POST /api/check
 router.post('/', authMiddleware, validateURL, async (req, res) => {
   const { url } = req.body;
   const urlHash = hashUrl(url);
+  const bypassCache = shouldBypassCache(url);
 
   try {
     // Step 1 — Check Redis cache first
-    const cached = await cacheGet(urlHash);
+    const cached = bypassCache ? null : await cacheGet(urlHash);
     if (cached) {
       return res.json({ ...cached, cached: true });
     }
 
     // Step 2 — Check Supabase for recent result (last 24 hours)
-    const { data: existing } = await supabase
-      .from('scan_results')
-      .select('*')
-      .eq('url_hash', urlHash)
-      .gte('checked_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-      .single();
+    let existing = null;
+    let timeColumnMatched = false;
+    for (const timeColumn of RESULT_TIME_COLUMNS) {
+      const response = await supabase
+        .from('scan_results')
+        .select('*')
+        .eq('url_hash', urlHash)
+        .gte(timeColumn, new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .single();
 
-    if (existing) {
+      if (!response.error || !/column .* does not exist/i.test(response.error.message || '')) {
+        existing = response.data || null;
+        timeColumnMatched = !response.error;
+        break;
+      }
+    }
+
+    if (!timeColumnMatched && !existing) {
+      const fallbackResponse = await supabase
+        .from('scan_results')
+        .select('*')
+        .eq('url_hash', urlHash)
+        .single();
+      if (!fallbackResponse.error) {
+        existing = fallbackResponse.data || null;
+      }
+    }
+
+    if (existing && !bypassCache) {
       // Save to Redis for next time
       await cacheSet(urlHash, existing);
       return res.json({ ...existing, cached: true });
@@ -37,9 +78,10 @@ router.post('/', authMiddleware, validateURL, async (req, res) => {
     const result = await analyzeURL(url);
 
     // Step 4 — Save to Supabase
-    const { error: saveError } = await supabase
-      .from('scan_results')
-      .upsert({
+    let saveError = null;
+    let savedWithTimeColumn = false;
+    for (const timeColumn of RESULT_TIME_COLUMNS) {
+      const payload = {
         url_hash:   urlHash,
         url:        result.url,
         verdict:    result.verdict,
@@ -47,8 +89,30 @@ router.post('/', authMiddleware, validateURL, async (req, res) => {
         confidence: result.confidence,
         signals:    result.signals,
         cached:     false,
-        checked_at: result.checked_at
-      });
+        [timeColumn]: result.checked_at
+      };
+      const response = await supabase.from('scan_results').upsert(payload);
+      if (!response.error || !/column .* does not exist/i.test(response.error.message || '')) {
+        saveError = response.error;
+        savedWithTimeColumn = !response.error;
+        break;
+      }
+      saveError = response.error;
+    }
+
+    if (!savedWithTimeColumn) {
+      const fallbackPayload = {
+        url_hash:   urlHash,
+        url:        result.url,
+        verdict:    result.verdict,
+        risk_score: result.risk_score,
+        confidence: result.confidence,
+        signals:    result.signals,
+        cached:     false
+      };
+      const fallbackSave = await supabase.from('scan_results').upsert(fallbackPayload);
+      saveError = fallbackSave.error;
+    }
 
     if (saveError) {
       console.error('Supabase save error:', saveError.message);
