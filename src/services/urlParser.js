@@ -20,6 +20,24 @@ const SUSPICIOUS_KEYWORDS = [
   'ethiotelecom', 'insa', 'ethswitch'
 ];
 
+// Commonly spoofed global brands
+const PROTECTED_BRANDS = [
+  'facebook', 'instagram', 'whatsapp', 'google',
+  'microsoft', 'apple', 'paypal', 'amazon', 'netflix'
+];
+
+const LEGIT_BRAND_DOMAINS = {
+  facebook: ['facebook.com', 'fb.com'],
+  instagram: ['instagram.com'],
+  whatsapp: ['whatsapp.com'],
+  google: ['google.com'],
+  microsoft: ['microsoft.com', 'live.com', 'office.com'],
+  apple: ['apple.com', 'icloud.com'],
+  paypal: ['paypal.com'],
+  amazon: ['amazon.com'],
+  netflix: ['netflix.com']
+};
+
 function calculateEntropy(str) {
   const freq = {};
   for (const ch of str) freq[ch] = (freq[ch] || 0) + 1;
@@ -41,6 +59,7 @@ function parseURL(rawUrl) {
     tldRisk: 'low',
     entropy: 0,
     excessiveHyphens: false,
+    brandImpersonation: null,
     score: 0
   };
 
@@ -81,6 +100,19 @@ function parseURL(rawUrl) {
     fullLower.includes(k)
   );
 
+  // Brand impersonation heuristic
+  for (const brand of PROTECTED_BRANDS) {
+    if (!hostname.includes(brand)) continue;
+
+    const allowed = LEGIT_BRAND_DOMAINS[brand] || [];
+    const isLegit = allowed.some(d => hostname === d || hostname.endsWith(`.${d}`));
+
+    if (!isLegit) {
+      signals.brandImpersonation = brand;
+      break;
+    }
+  }
+
   // Excessive hyphens in domain
   signals.excessiveHyphens = (hostname.match(/-/g) || []).length >= 3;
 
@@ -104,6 +136,7 @@ function parseURL(rawUrl) {
   if (signals.excessiveHyphens)      score += 10;
   if (signals.entropy > 4.5)         score += 10;
   if (signals.suspiciousKeywords.length > 0) score += 10;
+  if (signals.brandImpersonation)    score += 30;
 
   signals.score = Math.min(score, 100);
   return signals;

@@ -1,4 +1,3 @@
-const { parseURL }          = require('./urlParser');
 const { checkWhois }        = require('./whois');
 const { checkSafeBrowsing } = require('./safeBrowsing');
 const { checkVirusTotal }   = require('./virusTotal');
@@ -24,10 +23,15 @@ function calcConfidence(results) {
 function checkHardOverride(results) {
   const sb = results.safeBrowsing;
   const vt = results.virusTotal;
+  const up = results.urlParser;
 
   if (sb.threatTypes?.includes('SOCIAL_ENGINEERING')) return true;
   if (sb.threatTypes?.includes('MALWARE'))             return true;
   if (vt.malicious > 15)                               return true;
+  if (
+    up.brandImpersonation &&
+    up.suspiciousKeywords?.some(k => ['verify', 'login', 'account', 'secure', 'password'].includes(k))
+  ) return true;
 
   return false;
 }
@@ -36,6 +40,37 @@ function getVerdict(score) {
   if (score >= 70) return 'PHISHING';
   if (score >= 40) return 'SUSPICIOUS';
   return 'SAFE';
+}
+
+function getUnknownReason(results, confidence) {
+  const failedServices = [
+    ['safeBrowsing', results.safeBrowsing.error],
+    ['virusTotal', results.virusTotal.error],
+    ['abuseIPDB', results.abuseIPDB.error],
+    ['whois', results.whois.error]
+  ].filter(([, err]) => err !== null).map(([name]) => name);
+
+  const externalFailedCount = failedServices.length;
+  const allExternalFailed = externalFailedCount === 4;
+
+  if (allExternalFailed) {
+    return {
+      isUnknown: true,
+      reason: 'All external intelligence providers failed'
+    };
+  }
+
+  if (confidence === 'LOW' && externalFailedCount >= 2) {
+    return {
+      isUnknown: true,
+      reason: `Low confidence: multiple provider failures (${failedServices.join(', ')})`
+    };
+  }
+
+  return {
+    isUnknown: false,
+    reason: null
+  };
 }
 
 async function analyzeURL(rawUrl) {
@@ -63,10 +98,10 @@ async function analyzeURL(rawUrl) {
     virusTotal:   1.0,
     abuseIPDB:    0.8,
     whois:        0.7,
-    urlParser:    1.0  // ← was 0.6, now equal weight
-  };
-
+ };
   let rawScore = 0;
+
+ async function analyzeURL(rawUrl) {
   rawScore += sbResult.score    * weights.safeBrowsing;
   rawScore += vtResult.score    * weights.virusTotal;
   rawScore += abuseResult.score * weights.abuseIPDB;
@@ -92,14 +127,18 @@ async function analyzeURL(rawUrl) {
   // IP address override — raw IP as host is always high risk
   if (urlResult.hasIPAddress) finalScore = Math.max(finalScore, 70);
 
-  const verdict    = getVerdict(finalScore);
   const confidence = calcConfidence(results);
+  const unknown = isHardOverride
+    ? { isUnknown: false, reason: null }
+    : getUnknownReason(results, confidence);
+  const verdict = unknown.isUnknown ? 'UNKNOWN' : getVerdict(finalScore);
 
   return {
     url:        rawUrl,
     verdict,
     risk_score: finalScore,
     confidence,
+    uncertainty_reason: unknown.reason,
     signals: {
       // URL Parser
       url_length:           urlResult.urlLength,
@@ -109,6 +148,7 @@ async function analyzeURL(rawUrl) {
       is_shortened:         urlResult.isShortened,
       tld_risk:             urlResult.tldRisk,
       suspicious_keywords:  urlResult.suspiciousKeywords,
+      brand_impersonation:  urlResult.brandImpersonation,
       entropy:              urlResult.entropy,
       url_score:            urlResult.score,
 
@@ -140,6 +180,7 @@ async function analyzeURL(rawUrl) {
     },
     checked_at: new Date().toISOString()
   };
+}
 }
 
 module.exports = { analyzeURL };
